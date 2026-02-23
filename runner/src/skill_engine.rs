@@ -98,10 +98,7 @@ pub async fn run_config_skill(
 
     let resp = req.send().await.context("Skill HTTP request failed")?;
     let status = resp.status();
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .unwrap_or_else(|_| serde_json::json!({}));
+    let body: serde_json::Value = resp.json().await.unwrap_or_else(|_| serde_json::json!({}));
 
     if !status.is_success() {
         anyhow::bail!("Skill endpoint returned {status}: {body}");

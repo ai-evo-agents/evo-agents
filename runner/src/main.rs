@@ -3,12 +3,9 @@ mod health_check;
 mod skill_engine;
 mod soul;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use evo_common::{logging::init_logging, messages::events};
-use rust_socketio::{
-    asynchronous::ClientBuilder,
-    Payload,
-};
+use rust_socketio::{Payload, asynchronous::ClientBuilder};
 use serde_json::json;
 use std::{path::PathBuf, time::Duration};
 use tracing::{error, info, warn};
@@ -47,8 +44,8 @@ async fn main() -> Result<()> {
     info!(skills = skills.len(), "skills loaded");
 
     // King address (Socket.IO server)
-    let king_address = std::env::var("KING_ADDRESS")
-        .unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let king_address =
+        std::env::var("KING_ADDRESS").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     info!(king = %king_address, "connecting to king");
 
@@ -75,7 +72,11 @@ async fn run_client(soul: &soul::Soul, king_address: &str) -> Result<()> {
             let r = role_cmd.clone();
             Box::pin(async move {
                 if let Some(data) = payload_to_json(&payload) {
-                    let stub = soul::Soul { agent_id: id, role: r, body: String::new() };
+                    let stub = soul::Soul {
+                        agent_id: id,
+                        role: r,
+                        body: String::new(),
+                    };
                     event_handler::dispatch_command(&stub, events::KING_COMMAND, &data);
                 }
             })
@@ -86,14 +87,20 @@ async fn run_client(soul: &soul::Soul, king_address: &str) -> Result<()> {
             let r = role_pipe.clone();
             Box::pin(async move {
                 if let Some(data) = payload_to_json(&payload) {
-                    let stub = soul::Soul { agent_id: id, role: r, body: String::new() };
+                    let stub = soul::Soul {
+                        agent_id: id,
+                        role: r,
+                        body: String::new(),
+                    };
                     event_handler::dispatch_command(&stub, events::PIPELINE_NEXT, &data);
                 }
             })
         })
-        .on("error", |err, _socket| Box::pin(async move {
-            error!(err = ?err, "socket error received");
-        }))
+        .on("error", |err, _socket| {
+            Box::pin(async move {
+                error!(err = ?err, "socket error received");
+            })
+        })
         .connect()
         .await
         .context("Failed to connect to king Socket.IO server")?;

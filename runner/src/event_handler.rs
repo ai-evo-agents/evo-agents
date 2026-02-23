@@ -1,5 +1,5 @@
 use crate::soul::Soul;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{info, warn};
 
 // ─── Pipeline dispatch ────────────────────────────────────────────────────────
@@ -10,10 +10,10 @@ pub fn dispatch_command(soul: &Soul, event: &str, data: &Value) -> Option<Value>
     info!(role = %soul.role, event = %event, "dispatching event");
 
     match soul.role.as_str() {
-        "learning"     => on_learning(event, data),
-        "building"     => on_building(event, data),
-        "pre-load"     => on_pre_load(event, data),
-        "evaluation"   => on_evaluation(event, data),
+        "learning" => on_learning(event, data),
+        "building" => on_building(event, data),
+        "pre-load" => on_pre_load(event, data),
+        "evaluation" => on_evaluation(event, data),
         "skill-manage" => on_skill_manage(event, data),
         other => {
             warn!(role = %other, "unknown role — ignoring event");

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Instant;
 use tracing::info;
 
@@ -15,10 +15,7 @@ pub struct EndpointHealth {
 }
 
 /// Probe a list of URLs and return health results.
-pub async fn check_endpoints(
-    client: &reqwest::Client,
-    urls: &[String],
-) -> Vec<EndpointHealth> {
+pub async fn check_endpoints(client: &reqwest::Client, urls: &[String]) -> Vec<EndpointHealth> {
     let mut results = Vec::with_capacity(urls.len());
 
     for url in urls {
