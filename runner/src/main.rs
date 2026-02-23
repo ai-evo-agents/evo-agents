@@ -64,29 +64,11 @@ async fn run_client(soul: &soul::Soul, king_address: &str) -> Result<()> {
     let role = soul.role.clone();
 
     // Clone identifiers for each closure
-    let (id_reg, role_reg) = (agent_id.clone(), role.clone());
     let (id_cmd, role_cmd) = (agent_id.clone(), role.clone());
     let (id_pipe, role_pipe) = (agent_id.clone(), role.clone());
-    let id_hb = agent_id.clone();
 
     let socket = ClientBuilder::new(king_address)
         .namespace("/")
-        // Register when connection is established
-        .on("connect", move |_payload, socket| {
-            let agent_id = id_reg.clone();
-            let role = role_reg.clone();
-            Box::pin(async move {
-                info!(agent_id = %agent_id, "connected to king, sending registration");
-                let payload = json!({
-                    "agent_id":     agent_id,
-                    "role":         role,
-                    "capabilities": [],
-                });
-                if let Err(e) = socket.emit(events::AGENT_REGISTER, payload).await {
-                    error!(err = %e, "failed to emit agent:register");
-                }
-            })
-        })
         // Dispatch king:command to role-specific handler
         .on(events::KING_COMMAND, move |payload, _socket| {
             let id = id_cmd.clone();
@@ -116,14 +98,40 @@ async fn run_client(soul: &soul::Soul, king_address: &str) -> Result<()> {
         .await
         .context("Failed to connect to king Socket.IO server")?;
 
-    info!("socket connected — entering heartbeat loop");
+    // Emit registration immediately after connect (more reliable than the "connect"
+    // callback which fires at transport level and may miss the Socket.IO namespace join)
+    info!(agent_id = %agent_id, role = %role, "connected to king, sending registration");
+    let reg_payload = json!({
+        "agent_id":     agent_id.clone(),
+        "role":         role.clone(),
+        "capabilities": [],
+    });
+    if let Err(e) = socket.emit(events::AGENT_REGISTER, reg_payload).await {
+        warn!(err = %e, "initial registration emit failed — will retry on next heartbeat");
+    }
 
-    // Heartbeat every 30 seconds
+    info!("entering heartbeat loop");
+
+    // Heartbeat every 30 seconds; also re-emit registration to handle reconnects
+    let mut first = true;
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
 
+        // Re-register on first heartbeat as a safety net
+        if first {
+            first = false;
+            let reg = json!({
+                "agent_id":     agent_id.clone(),
+                "role":         role.clone(),
+                "capabilities": [],
+            });
+            if let Err(e) = socket.emit(events::AGENT_REGISTER, reg).await {
+                warn!(err = %e, "heartbeat re-registration failed");
+            }
+        }
+
         let payload = json!({
-            "agent_id": id_hb,
+            "agent_id": agent_id.clone(),
             "status":   "alive",
         });
 
