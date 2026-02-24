@@ -5,9 +5,13 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: evo-runner
+  OPENSSL_STATIC: 1
 
 jobs:
   # ── Publish SDK to crates.io ────────────────────────────────────────────────
