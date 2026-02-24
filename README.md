@@ -46,7 +46,7 @@ Each agent instance runs the same `runner` binary, pointed at its agent folder. 
 
 **`main.rs`**
 
-Entry point. Parses the agent folder path from the CLI argument, loads `soul.md` to determine the agent's role, connects to king's Socket.IO server, registers with an `AgentRegister` message, and starts the event loop.
+Entry point. Parses the agent folder path from the CLI argument, loads `soul.md` to determine the agent's role, connects to king's Socket.IO server, registers with an `AgentRegister` message, and starts the event loop. Skills and capabilities are now included in the `agent:register` payload (previously sent empty capabilities). After registration, the runner performs a health check against king's `/health` HTTP endpoint and emits the results to king via `agent:health`.
 
 **`event_handler.rs`**
 
@@ -75,7 +75,30 @@ Pre-load API health testing. For each skill, checks that configured API endpoint
 
 **`socket_client.rs`**
 
-Manages the Socket.IO connection to king. Reads the server address from `AgentConfig.king_address`, emits `AgentRegister` on connect, sends periodic heartbeats via `AgentStatus`, and handles disconnect and reconnect.
+Manages the Socket.IO connection to king. Reads the server address from `AgentConfig.king_address`, emits `AgentRegister` on connect, sends periodic heartbeats via `AgentStatus`, and handles disconnect and reconnect. The registration payload now includes capabilities and skills:
+
+```json
+{
+    "agent_id": "learning-learning",
+    "role": "learning",
+    "capabilities": ["discover", "evaluate"],
+    "skills": ["web-search", "summarize"]
+}
+```
+
+Capabilities are aggregated from all loaded skill manifests (deduplicated), and skills lists the names of all loaded skills.
+
+## Health Check on Connect
+
+After connecting to king and sending `agent:register`, the runner automatically verifies HTTP connectivity:
+
+1. Builds an HTTP client with a 5-second timeout.
+2. Sends `GET {KING_ADDRESS}/health` to probe king's HTTP endpoint.
+3. Records reachability, latency (ms), and HTTP status code.
+4. Emits `agent:health` event to king with the health check results.
+5. Logs whether the health check passed or failed.
+
+This ensures the runner can reach king via both Socket.IO (for events) and HTTP (for health probes) before entering its heartbeat loop.
 
 ## Agent Folder Structure
 

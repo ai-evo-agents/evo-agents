@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use evo_common::{logging::init_logging, messages::events};
 use rust_socketio::{Payload, asynchronous::ClientBuilder};
 use serde_json::json;
-use std::{path::PathBuf, time::Duration};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 use tracing::{error, info, warn};
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
@@ -49,16 +49,30 @@ async fn main() -> Result<()> {
 
     info!(king = %king_address, "connecting to king");
 
-    run_client(&soul, &king_address).await?;
+    run_client(&soul, &king_address, &skills).await?;
 
     Ok(())
 }
 
 // ─── Socket.IO client loop ────────────────────────────────────────────────────
 
-async fn run_client(soul: &soul::Soul, king_address: &str) -> Result<()> {
+async fn run_client(
+    soul: &soul::Soul,
+    king_address: &str,
+    skills: &[skill_engine::LoadedSkill],
+) -> Result<()> {
     let agent_id = soul.agent_id.clone();
     let role = soul.role.clone();
+
+    // Build capabilities from skill manifests (deduplicated)
+    let capabilities: Vec<String> = skills
+        .iter()
+        .flat_map(|s| s.manifest.capabilities.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let skill_names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
 
     // Clone identifiers for each closure
     let (id_cmd, role_cmd) = (agent_id.clone(), role.clone());
@@ -105,32 +119,56 @@ async fn run_client(soul: &soul::Soul, king_address: &str) -> Result<()> {
         .await
         .context("Failed to connect to king Socket.IO server")?;
 
-    // Emit registration immediately after connect (more reliable than the "connect"
-    // callback which fires at transport level and may miss the Socket.IO namespace join)
+    // ── Registration ─────────────────────────────────────────────────────────
     info!(agent_id = %agent_id, role = %role, "connected to king, sending registration");
     let reg_payload = json!({
         "agent_id":     agent_id.clone(),
         "role":         role.clone(),
-        "capabilities": [],
+        "capabilities": capabilities,
+        "skills":       skill_names,
     });
     if let Err(e) = socket.emit(events::AGENT_REGISTER, reg_payload).await {
         warn!(err = %e, "initial registration emit failed — will retry on next heartbeat");
     }
 
+    // ── Post-connect health check ────────────────────────────────────────────
+    info!("running post-connect health check against king");
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    let king_health_url = format!("{}/health", king_address);
+    let health_results =
+        health_check::check_endpoints(&http_client, &[king_health_url]).await;
+    let health_payload = health_check::health_to_json(&agent_id, &health_results);
+
+    let all_healthy = health_results.iter().all(|h| h.reachable);
+    if all_healthy {
+        info!("king health check passed");
+    } else {
+        warn!("king health check failed — king may not be fully reachable via HTTP");
+    }
+
+    if let Err(e) = socket.emit(events::AGENT_HEALTH, health_payload).await {
+        warn!(err = %e, "failed to emit health check results");
+    }
+
+    // ── Heartbeat loop ───────────────────────────────────────────────────────
     info!("entering heartbeat loop");
 
-    // Heartbeat every 30 seconds; also re-emit registration to handle reconnects
     let mut first = true;
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
 
-        // Re-register on first heartbeat as a safety net
+        // Re-register on first heartbeat as a safety net for reconnects
         if first {
             first = false;
             let reg = json!({
                 "agent_id":     agent_id.clone(),
                 "role":         role.clone(),
-                "capabilities": [],
+                "capabilities": capabilities,
+                "skills":       skill_names,
             });
             if let Err(e) = socket.emit(events::AGENT_REGISTER, reg).await {
                 warn!(err = %e, "heartbeat re-registration failed");
