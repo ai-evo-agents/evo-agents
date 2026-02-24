@@ -4,7 +4,7 @@ Runner binary source for the Evo self-evolution agent system. This is a Cargo wo
 
 ## Current Status
 
-Active development — runner binary with Socket.IO client, health checks, and role-based event dispatch.
+Active development — runner binary with Socket.IO client, gateway LLM client, health checks, and async pipeline handlers.
 
 ## Part of the Evo System
 
@@ -25,11 +25,12 @@ evo-agents/
 ├── runner/                  # Runner binary crate
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs          # Entry: parse agent folder, load soul.md, connect socket.io
-│       ├── soul.rs          # Parse soul.md for role and behavior
-│       ├── event_handler.rs # Role-based event dispatch
-│       ├── skill_engine.rs  # Execute skills (config or code)
-│       └── health_check.rs  # Endpoint health testing
+│       ├── main.rs           # Entry: parse agent folder, load soul.md, connect socket.io
+│       ├── soul.rs           # Parse soul.md for role, behavior (LLM system prompt)
+│       ├── event_handler.rs  # Async pipeline handlers (emit stage_result to king)
+│       ├── gateway_client.rs # HTTP client for evo-gateway LLM chat completions
+│       ├── skill_engine.rs   # Execute skills (config or code)
+│       └── health_check.rs   # Endpoint health testing
 ├── download-runner.sh       # Platform-aware binary downloader
 ├── publish.sh               # Build, validate, commit, push, tag
 └── users/                   # Legacy; user agents now use evo-user-agent-template
@@ -62,15 +63,21 @@ Parses `soul.md` to extract agent identity. Returns a `Soul` struct with `agent_
 
 **`event_handler.rs`**
 
-Role-based event dispatch. Reads the role from the `## Role` header in `soul.md` and registers the appropriate event handlers:
+Async pipeline handlers. When a `pipeline:next` event arrives, `dispatch_pipeline_event` routes to the correct async handler based on role. Each handler uses the `GatewayClient` for LLM calls (except pre-load) and emits `pipeline:stage_result` back to king on completion or failure.
 
-- `Learning` - handles `pipeline:next(stage=learning)`, `king:command(discover)`
-- `Building` - handles `pipeline:next(stage=building)`, `king:command(build)`
-- `Pre-load` - handles `pipeline:next(stage=pre_load)`, runs health checks
-- `Evaluation` - handles `pipeline:next(stage=evaluation)`, `king:command(evaluate)`
-- `Skill Manage` - handles `pipeline:next(stage=skill_manage)`, `king:command(activate/deactivate)`
+| Handler | Uses LLM? | What It Does |
+|---------|-----------|-------------|
+| `on_learning` | Yes | Discovers skill candidates, ranks them via LLM |
+| `on_building` | Yes | Generates manifest.toml + config.toml from candidate data |
+| `on_pre_load` | No | Health-checks all skill API endpoints |
+| `on_evaluation` | Yes | Scores skills across 4 dimensions (utility, reliability, novelty, integration) |
+| `on_skill_manage` | Yes | Activates or discards based on score threshold (0.6), plans deployment |
 
-All roles also handle `king:command` generically.
+All roles also handle `king:command` generically (logging only).
+
+**`gateway_client.rs`**
+
+HTTP client for calling evo-gateway's OpenAI-compatible chat completion API. Uses `POST /v1/chat/completions` with model, system prompt (from soul.md `## Behavior`), and user prompt. 120-second timeout for LLM calls.
 
 **`skill_engine.rs`**
 
