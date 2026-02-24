@@ -48,6 +48,7 @@ pub mod handler;
 pub mod health_check;
 pub mod kernel_handlers;
 pub mod runner;
+pub mod self_upgrade;
 pub mod skill_engine;
 pub mod soul;
 

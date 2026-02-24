@@ -3,17 +3,34 @@ use serde_json::{Value, json};
 use tracing::info;
 
 use crate::handler::{AgentHandler, PipelineContext};
+use crate::self_upgrade;
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
 
 /// Default handler for the **Evaluation** kernel agent.
 ///
-/// Scores and benchmarks a skill across multiple dimensions using the LLM.
+/// Two modes:
+/// - **Skill evaluation** (default): Scores and benchmarks a skill across
+///   multiple dimensions using the LLM.
+/// - **Self-upgrade evaluation** (`build_type: "self_upgrade"`): Compares
+///   new version vs current, verifies all pre-load checks passed, and
+///   produces a pass/fail verdict.
 pub struct EvaluationHandler;
 
 #[async_trait]
 impl AgentHandler for EvaluationHandler {
     async fn on_pipeline(&self, ctx: PipelineContext<'_>) -> anyhow::Result<Value> {
+        if self_upgrade::is_self_upgrade(&ctx.metadata) {
+            return self.evaluate_upgrade(&ctx).await;
+        }
+
+        self.evaluate_skill(&ctx).await
+    }
+}
+
+impl EvaluationHandler {
+    /// Original LLM-based skill evaluation.
+    async fn evaluate_skill(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<Value> {
         info!(artifact_id = %ctx.artifact_id, "evaluation agent: scoring skill");
 
         let prompt = format!(
@@ -62,6 +79,64 @@ impl AgentHandler for EvaluationHandler {
 
         Ok(json!({
             "evaluation": evaluation,
+            "artifact_id": ctx.artifact_id,
+            "overall_score": overall_score,
+            "recommendation": recommendation,
+        }))
+    }
+
+    /// Self-upgrade: evaluate the new release against current version.
+    async fn evaluate_upgrade(&self, ctx: &PipelineContext<'_>) -> anyhow::Result<Value> {
+        let component = ctx.metadata["component"]
+            .as_str()
+            .unwrap_or(&ctx.artifact_id);
+        let new_version = ctx.metadata["new_version"]
+            .as_str()
+            .unwrap_or("v0.0.0");
+
+        info!(
+            component,
+            new_version,
+            run_id = %ctx.run_id,
+            "evaluation agent: evaluating self-upgrade"
+        );
+
+        // Check that pre-load validation passed
+        let preload_passed = ctx.metadata["validation"]["all_passed"]
+            .as_bool()
+            .unwrap_or(false);
+
+        if !preload_passed {
+            return Ok(json!({
+                "build_type": "self_upgrade",
+                "component": component,
+                "new_version": new_version,
+                "overall_score": 0.0,
+                "recommendation": "discard",
+                "reasoning": "Pre-load validation did not pass. Cannot approve upgrade.",
+                "artifact_id": ctx.artifact_id,
+            }));
+        }
+
+        let eval_result = self_upgrade::evaluate_upgrade(component, new_version).await?;
+
+        let overall_score = eval_result["overall_score"].as_f64().unwrap_or(0.0);
+        let recommendation = eval_result["recommendation"]
+            .as_str()
+            .unwrap_or("hold")
+            .to_string();
+
+        info!(
+            component,
+            new_version,
+            overall_score = %overall_score,
+            recommendation = %recommendation,
+            "self-upgrade evaluation complete"
+        );
+
+        Ok(json!({
+            "build_type": "self_upgrade",
+            "evaluation": eval_result,
             "artifact_id": ctx.artifact_id,
             "overall_score": overall_score,
             "recommendation": recommendation,

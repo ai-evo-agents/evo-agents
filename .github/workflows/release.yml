@@ -23,6 +23,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Use crates.io dependencies
+        shell: bash
+        run: |
+          sed -i.bak 's|evo-common.*=.*{.*path.*=.*"[^"]*".*}|evo-common = "0.6"|' evo-agent-sdk/Cargo.toml
+          rm -f evo-agent-sdk/Cargo.toml.bak
+
       - name: Publish evo-agent-sdk
         continue-on-error: true
         run: cargo publish -p evo-agent-sdk
@@ -60,6 +66,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+
+      - name: Use crates.io dependencies
+        shell: bash
+        run: |
+          sed -i.bak 's|evo-common.*=.*{.*path.*=.*"[^"]*".*}|evo-common = "0.6"|' evo-agent-sdk/Cargo.toml
+          rm -f evo-agent-sdk/Cargo.toml.bak
 
       - name: Build evo-runner (cross)
         uses: houseabsolute/actions-rust-cross@v1

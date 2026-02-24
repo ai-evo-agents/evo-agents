@@ -1,6 +1,6 @@
 [package]
 name = "evo-agent-sdk"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "SDK for building agents in the Evo self-evolution system"
 license = "MIT"
@@ -9,7 +9,7 @@ keywords = ["agents", "ai", "self-evolution", "sdk"]
 categories = ["development-tools"]
 
 [dependencies]
-evo-common         = "0.3"
+evo-common         = { path = "../../evo-common" }
 rust_socketio      = { version = "0.6", features = ["async"] }
 tokio              = { version = "1", features = ["full"] }
 reqwest            = { version = "0.12", features = ["json", "native-tls-vendored"] }
