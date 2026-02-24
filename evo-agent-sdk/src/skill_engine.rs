@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use evo_common::skill::{SkillConfig, SkillManifest};
 use std::path::{Path, PathBuf};

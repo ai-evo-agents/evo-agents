@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # publish.sh — Build, verify, and push evo-agents to GitHub.
 #
-# Handles the path→git dependency swap for evo-common so CI passes,
+# Handles the path→crates.io dependency swap for evo-agent-sdk so CI passes,
 # then restores the local path dependency for continued development.
 #
 # Usage:
 #   ./publish.sh                     # Push current changes to main
-#   ./publish.sh --release v0.2.0    # Push + create release tag (triggers binary builds)
+#   ./publish.sh --release v0.2.0    # Push + create release tag (triggers binary builds + crates.io publish)
 #   ./publish.sh --dry-run           # Run checks only, no push
 #   ./publish.sh --skip-common       # Skip evo-common push (already up to date)
 #
@@ -14,12 +14,14 @@
 #   - Clean working tree (or changes staged for commit)
 #   - evo-common already pushed to GitHub (or use without --skip-common)
 #   - gh CLI authenticated
+#   - CARGO_REGISTRY_TOKEN set in GitHub repo secrets (for release.yml publish)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 RUNNER_CARGO="$REPO_ROOT/runner/Cargo.toml"
+SDK_CARGO="$REPO_ROOT/evo-agent-sdk/Cargo.toml"
 COMMON_DIR="$REPO_ROOT/../evo-common"
 COMMON_GIT_URL="https://github.com/ai-evo-agents/evo-common.git"
 
@@ -99,34 +101,36 @@ step "Running local checks (fmt + clippy + test)"
 cd "$REPO_ROOT"
 
 info "cargo fmt --check"
-cargo fmt --check -p runner || fail "cargo fmt failed — run: cargo fmt -p runner"
+cargo fmt --check || fail "cargo fmt failed — run: cargo fmt"
 ok "fmt"
 
 info "cargo clippy"
-cargo clippy -p runner -- -D warnings 2>&1 || fail "clippy failed"
+cargo clippy --workspace -- -D warnings 2>&1 || fail "clippy failed"
 ok "clippy"
 
 info "cargo test"
-cargo test -p runner 2>&1 || fail "tests failed"
+cargo test --workspace 2>&1 || fail "tests failed"
 ok "tests"
 
-# ── Step 3: Swap path dependency → git dependency ────────────────────────────
+# ── Step 3: Swap path dependency → crates.io for CI ─────────────────────────
 
-step "Preparing Cargo.toml for CI (path → git)"
+step "Preparing Cargo.toml for CI (path → crates.io)"
 
-# Backup the original
+# Backup originals
 cp "$RUNNER_CARGO" "$RUNNER_CARGO.bak"
 
-# Replace path dependency with git dependency
-if grep -q 'path = "../../evo-common"' "$RUNNER_CARGO"; then
-  sed -i.sed 's|path = "../../evo-common"|git = "'"$COMMON_GIT_URL"'"|' "$RUNNER_CARGO"
+# Runner uses evo-agent-sdk via path locally; swap to crates.io version for CI
+if grep -q 'path = "../evo-agent-sdk"' "$RUNNER_CARGO"; then
+  # Extract SDK version from SDK Cargo.toml
+  SDK_VERSION=$(grep '^version' "$SDK_CARGO" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+  sed -i.sed "s|path = \"../evo-agent-sdk\"|version = \"$SDK_VERSION\"|" "$RUNNER_CARGO"
   rm -f "$RUNNER_CARGO.sed"
-  ok "Swapped to git dependency"
+  ok "Runner: swapped evo-agent-sdk path → version $SDK_VERSION"
 else
-  info "Already using git dependency — no swap needed"
+  info "Runner: already using crates.io dependency — no swap needed"
 fi
 
-# Regenerate Cargo.lock with the git dependency
+# Regenerate Cargo.lock
 info "Regenerating Cargo.lock"
 cargo generate-lockfile 2>&1 || true
 
@@ -152,7 +156,7 @@ fi
 
 # ── Step 5: Restore local path dependency ────────────────────────────────────
 
-step "Restoring local development dependency (git → path)"
+step "Restoring local development dependency"
 
 mv "$RUNNER_CARGO.bak" "$RUNNER_CARGO"
 
@@ -173,25 +177,30 @@ if [[ -n "$RELEASE_TAG" ]]; then
 
   if [[ "$DRY_RUN" == true ]]; then
     info "[dry-run] Would create tag: $RELEASE_TAG"
-    info "[dry-run] Would push tag to origin (triggers release.yml build)"
+    info "[dry-run] Would push tag to origin (triggers release.yml: publish SDK + build binaries)"
   else
-    # Need to re-swap to git dep for the tagged commit
+    # Re-swap to crates.io dep for the tagged commit
     cp "$RUNNER_CARGO" "$RUNNER_CARGO.bak"
-    sed -i.sed 's|path = "../../evo-common"|git = "'"$COMMON_GIT_URL"'"|' "$RUNNER_CARGO"
-    rm -f "$RUNNER_CARGO.sed"
-    cargo generate-lockfile 2>&1 || true
 
-    # Update version in Cargo.toml
+    SDK_VERSION=$(grep '^version' "$SDK_CARGO" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    sed -i.sed "s|path = \"../evo-agent-sdk\"|version = \"$SDK_VERSION\"|" "$RUNNER_CARGO"
+    rm -f "$RUNNER_CARGO.sed"
+
+    # Update versions in both Cargo.toml files
     SEMVER="${RELEASE_TAG#v}"
     sed -i.sed "s/^version = \".*\"/version = \"$SEMVER\"/" "$RUNNER_CARGO"
     rm -f "$RUNNER_CARGO.sed"
+    sed -i.sed "s/^version = \".*\"/version = \"$SEMVER\"/" "$SDK_CARGO"
+    rm -f "$SDK_CARGO.sed"
+
+    cargo generate-lockfile 2>&1 || true
 
     git add -A
     git commit -m "release: $RELEASE_TAG"
     git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG"
     git push origin main --tags
 
-    ok "Tag $RELEASE_TAG pushed — release.yml will build binaries"
+    ok "Tag $RELEASE_TAG pushed — release.yml will publish SDK + build binaries"
 
     # Restore local dev
     mv "$RUNNER_CARGO.bak" "$RUNNER_CARGO"

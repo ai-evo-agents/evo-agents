@@ -285,10 +285,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "evo-common"
+name = "evo-agent-sdk"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "evo-common",
+ "reqwest",
+ "rust_socketio",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "evo-common"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c259580c9811ca764cab80f396647603f457407ea3fe642a318a0a34ccd9c9b4"
+checksum = "d6e930ec7607d79edc0991266fbef897aae120fe4abcd5720df9dae4af5ef011"
 dependencies = [
  "chrono",
  "serde",
@@ -1177,19 +1198,8 @@ name = "runner"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
- "evo-common",
- "reqwest",
- "rust_socketio",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
+ "evo-agent-sdk",
  "tokio",
- "toml",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

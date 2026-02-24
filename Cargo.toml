@@ -1,3 +1,3 @@
 [workspace]
-members = ["runner"]
+members = ["evo-agent-sdk", "runner"]
 resolver = "2"

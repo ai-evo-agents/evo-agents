@@ -10,8 +10,24 @@ env:
   BINARY_NAME: evo-runner
 
 jobs:
+  # ── Publish SDK to crates.io ────────────────────────────────────────────────
+  publish-sdk:
+    name: Publish evo-agent-sdk to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish evo-agent-sdk
+        run: cargo publish -p evo-agent-sdk
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # ── Build cross-platform runner binaries ────────────────────────────────────
   build:
     name: Build ${{ matrix.target }}
+    needs: publish-sdk
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -40,20 +56,20 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build evo-runner (cross)
-        uses: houseabsolute/actions-rust-cross@v0
+        uses: houseabsolute/actions-rust-cross@v1
         with:
           command: build
           target: ${{ matrix.target }}
-          # Build only the runner binary from the workspace
-          args: "--locked --release -p runner"
+          args: "--release -p runner"
+          toolchain: stable
           strip: true
 
       - name: Package
         shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ github.ref_name }}"
-          TARGET="${{ matrix.target }}"
-
           if [[ "$TARGET" == *"windows"* ]]; then
             BIN="${BINARY_NAME}.exe"
             ARCHIVE="${BINARY_NAME}-${VERSION}-${TARGET}.zip"

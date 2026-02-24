@@ -13,7 +13,6 @@ pub struct Soul {
     /// The `## Behavior` section content — used as the LLM system prompt.
     pub behavior: String,
     /// Raw markdown body of the soul (stored for future introspection).
-    #[allow(dead_code)]
     pub body: String,
 }
 
@@ -42,8 +41,7 @@ pub fn load_soul(agent_dir: &Path) -> Result<Soul> {
         .to_lowercase()
         .replace(' ', "-");
 
-    let behavior = extract_full_section(&content, "Behavior")
-        .unwrap_or_default();
+    let behavior = extract_full_section(&content, "Behavior").unwrap_or_default();
 
     // Derive agent ID from folder name + role
     let folder_name = agent_dir
@@ -62,7 +60,7 @@ pub fn load_soul(agent_dir: &Path) -> Result<Soul> {
 }
 
 /// Extract the first non-empty line of a `## Section` from markdown.
-fn extract_section(content: &str, section: &str) -> Option<String> {
+pub fn extract_section(content: &str, section: &str) -> Option<String> {
     let marker = format!("## {section}");
     let mut in_section = false;
 
@@ -89,7 +87,7 @@ fn extract_section(content: &str, section: &str) -> Option<String> {
 /// Extract the full multi-line content of a `## Section` from markdown.
 ///
 /// Returns all lines between `## Section` and the next `##` header (or EOF).
-fn extract_full_section(content: &str, section: &str) -> Option<String> {
+pub fn extract_full_section(content: &str, section: &str) -> Option<String> {
     let marker = format!("## {section}");
     let mut in_section = false;
     let mut lines = Vec::new();
