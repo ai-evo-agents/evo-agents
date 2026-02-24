@@ -8,7 +8,7 @@ use tracing::{info, warn};
 // ─── Skill discovery ──────────────────────────────────────────────────────────
 
 /// Represents a single loaded skill in the agent's `skills/` directory.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LoadedSkill {
     pub name: String,
     pub manifest: SkillManifest,

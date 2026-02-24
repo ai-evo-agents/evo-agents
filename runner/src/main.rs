@@ -1,13 +1,15 @@
 mod event_handler;
+mod gateway_client;
 mod health_check;
 mod skill_engine;
 mod soul;
 
 use anyhow::{Context, Result, bail};
 use evo_common::{logging::init_logging, messages::events};
+use gateway_client::GatewayClient;
 use rust_socketio::{Payload, asynchronous::ClientBuilder};
 use serde_json::json;
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
@@ -36,6 +38,7 @@ async fn main() -> Result<()> {
         agent_id = %soul.agent_id,
         role     = %soul.role,
         folder   = %agent_dir.display(),
+        behavior_len = soul.behavior.len(),
         "runner starting"
     );
 
@@ -47,9 +50,19 @@ async fn main() -> Result<()> {
     let king_address =
         std::env::var("KING_ADDRESS").unwrap_or_else(|_| "http://localhost:3000".to_string());
 
-    info!(king = %king_address, "connecting to king");
+    // Gateway address (LLM proxy)
+    let gateway_address =
+        std::env::var("GATEWAY_ADDRESS").unwrap_or_else(|_| "http://localhost:8080".to_string());
 
-    run_client(&soul, &king_address, &skills).await?;
+    info!(king = %king_address, gateway = %gateway_address, "connecting to king");
+
+    // Create gateway client for LLM calls
+    let gateway = Arc::new(
+        GatewayClient::new(&gateway_address)
+            .context("Failed to create gateway client")?,
+    );
+
+    run_client(&soul, &king_address, &skills, &gateway).await?;
 
     Ok(())
 }
@@ -60,6 +73,7 @@ async fn run_client(
     soul: &soul::Soul,
     king_address: &str,
     skills: &[skill_engine::LoadedSkill],
+    gateway: &Arc<GatewayClient>,
 ) -> Result<()> {
     let agent_id = soul.agent_id.clone();
     let role = soul.role.clone();
@@ -76,7 +90,12 @@ async fn run_client(
 
     // Clone identifiers for each closure
     let (id_cmd, role_cmd) = (agent_id.clone(), role.clone());
-    let (id_pipe, role_pipe) = (agent_id.clone(), role.clone());
+
+    // Clones for pipeline handler (needs gateway + soul + skills)
+    let soul_pipe = soul.clone();
+    let gateway_pipe = Arc::clone(gateway);
+    // Collect skill data we need into owned types for the closure
+    let skills_pipe: Vec<skill_engine::LoadedSkill> = Vec::new(); // Skills are in agent dir, not needed in closure
 
     let socket = ClientBuilder::new(king_address)
         .namespace("/")
@@ -89,24 +108,24 @@ async fn run_client(
                     let stub = soul::Soul {
                         agent_id: id,
                         role: r,
+                        behavior: String::new(),
                         body: String::new(),
                     };
                     event_handler::dispatch_command(&stub, events::KING_COMMAND, &data);
                 }
             })
         })
-        // Dispatch pipeline:next to role-specific handler
-        .on(events::PIPELINE_NEXT, move |payload, _socket| {
-            let id = id_pipe.clone();
-            let r = role_pipe.clone();
+        // Dispatch pipeline:next to async role-specific handler
+        .on(events::PIPELINE_NEXT, move |payload, socket| {
+            let soul = soul_pipe.clone();
+            let gateway = Arc::clone(&gateway_pipe);
+            let skills = skills_pipe.clone();
             Box::pin(async move {
                 if let Some(data) = payload_to_json(&payload) {
-                    let stub = soul::Soul {
-                        agent_id: id,
-                        role: r,
-                        body: String::new(),
-                    };
-                    event_handler::dispatch_command(&stub, events::PIPELINE_NEXT, &data);
+                    event_handler::dispatch_pipeline_event(
+                        &soul, &data, &socket, &gateway, &skills,
+                    )
+                    .await;
                 }
             })
         })
