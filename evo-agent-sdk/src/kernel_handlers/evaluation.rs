@@ -45,7 +45,11 @@ impl EvaluationHandler {
              Also provide:\n\
              - overall_score: weighted average (utility=0.4, reliability=0.3, novelty=0.2, integration=0.1)\n\
              - recommendation: 'activate', 'hold', or 'discard'\n\
-             - reasoning: brief explanation\n\n\
+             - reasoning: brief explanation\n\
+             - subtasks: an array of follow-up work items if recommendation is 'activate'.\n\
+               Each subtask should have: task_type (string), summary (string), payload (object with relevant details).\n\
+               Examples: integration testing, documentation, dependency check, configuration setup.\n\
+               Return an empty array if no follow-up work is needed.\n\n\
              Respond with valid JSON.",
             serde_json::to_string_pretty(&ctx.metadata).unwrap_or_default()
         );
@@ -77,11 +81,14 @@ impl EvaluationHandler {
             "evaluation complete"
         );
 
+        let subtasks = evaluation.get("subtasks").cloned().unwrap_or(json!([]));
+
         Ok(json!({
             "evaluation": evaluation,
             "artifact_id": ctx.artifact_id,
             "overall_score": overall_score,
             "recommendation": recommendation,
+            "subtasks": subtasks,
         }))
     }
 
