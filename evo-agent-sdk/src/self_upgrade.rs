@@ -67,7 +67,9 @@ pub fn is_self_upgrade(metadata: &Value) -> bool {
 /// Resolve `~/.evo-agents` respecting `EVO_HOME` env var.
 pub fn evo_home() -> PathBuf {
     let raw = std::env::var("EVO_HOME").unwrap_or_else(|_| "~/.evo-agents".to_string());
-    if raw.starts_with("~/") && let Ok(home) = std::env::var("HOME") {
+    if raw.starts_with("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
         return PathBuf::from(format!("{home}{}", &raw[1..]));
     }
     PathBuf::from(raw)
@@ -475,7 +477,9 @@ pub async fn evaluate_upgrade(component: &str, new_version: &str) -> Result<Valu
 // ─── Internal Helpers ───────────────────────────────────────────────────────
 
 fn resolve_path(raw: &str) -> PathBuf {
-    if raw.starts_with("~/") && let Ok(home) = std::env::var("HOME") {
+    if raw.starts_with("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
         return PathBuf::from(format!("{home}{}", &raw[1..]));
     }
     PathBuf::from(raw)
