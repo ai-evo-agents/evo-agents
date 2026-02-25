@@ -90,9 +90,7 @@ impl EvaluationHandler {
         let component = ctx.metadata["component"]
             .as_str()
             .unwrap_or(&ctx.artifact_id);
-        let new_version = ctx.metadata["new_version"]
-            .as_str()
-            .unwrap_or("v0.0.0");
+        let new_version = ctx.metadata["new_version"].as_str().unwrap_or("v0.0.0");
 
         info!(
             component,

@@ -151,6 +151,12 @@ async fn run_client<H: AgentHandler>(
     let gateway_pipe = Arc::clone(gateway);
     let handler_pipe = Arc::clone(&handler);
 
+    // Clones for debug prompt handler
+    let soul_debug = soul.clone();
+    let gateway_debug = Arc::clone(gateway);
+    let id_debug = agent_id.clone();
+    let role_debug = role.clone();
+
     let socket = ClientBuilder::new(king_address)
         .namespace("/")
         // Dispatch king:command via handler
@@ -183,6 +189,18 @@ async fn run_client<H: AgentHandler>(
             Box::pin(async move {
                 if let Some(data) = payload_to_json(&payload) {
                     dispatch_pipeline(&soul, &data, &socket, &gateway, &[], &*h).await;
+                }
+            })
+        })
+        // Dispatch debug:prompt — send prompt to gateway, return response
+        .on(events::DEBUG_PROMPT, move |payload, socket| {
+            let soul = soul_debug.clone();
+            let gateway = Arc::clone(&gateway_debug);
+            let id = id_debug.clone();
+            let r = role_debug.clone();
+            Box::pin(async move {
+                if let Some(data) = payload_to_json(&payload) {
+                    dispatch_debug_prompt(&soul, &data, &socket, &gateway, &id, &r).await;
                 }
             })
         })
@@ -328,6 +346,84 @@ async fn dispatch_pipeline(
             stage = %stage,
             err = %e,
             "failed to emit pipeline:stage_result"
+        );
+    }
+}
+
+// ─── Debug prompt dispatch ────────────────────────────────────────────────────
+
+async fn dispatch_debug_prompt(
+    soul: &Soul,
+    data: &Value,
+    socket: &rust_socketio::asynchronous::Client,
+    gateway: &Arc<GatewayClient>,
+    agent_id: &str,
+    role: &str,
+) {
+    let request_id = data["request_id"].as_str().unwrap_or("unknown").to_string();
+    let model = data["model"].as_str().unwrap_or("gpt-4o-mini").to_string();
+    let prompt = data["prompt"].as_str().unwrap_or("").to_string();
+    let temperature = data["temperature"].as_f64();
+    let max_tokens = data["max_tokens"].as_u64().map(|n| n as u32);
+
+    // Prepend provider prefix if specified
+    let full_model = match data["provider"].as_str() {
+        Some(p) if !p.is_empty() => format!("{p}:{model}"),
+        _ => model.clone(),
+    };
+
+    info!(
+        agent_id = %agent_id,
+        request_id = %request_id,
+        model = %full_model,
+        "processing debug prompt"
+    );
+
+    let start = std::time::Instant::now();
+
+    let result = gateway
+        .chat_completion(
+            &full_model,
+            &soul.behavior,
+            &prompt,
+            temperature,
+            max_tokens,
+        )
+        .await;
+
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    let response = match result {
+        Ok(text) => json!({
+            "request_id": request_id,
+            "agent_id": agent_id,
+            "role": role,
+            "model": full_model,
+            "response": text,
+            "latency_ms": latency_ms,
+        }),
+        Err(e) => {
+            error!(
+                request_id = %request_id,
+                err = %e,
+                "debug prompt failed"
+            );
+            json!({
+                "request_id": request_id,
+                "agent_id": agent_id,
+                "role": role,
+                "model": full_model,
+                "error": e.to_string(),
+                "latency_ms": latency_ms,
+            })
+        }
+    };
+
+    if let Err(e) = socket.emit(events::DEBUG_RESPONSE, response).await {
+        error!(
+            request_id = %request_id,
+            err = %e,
+            "failed to emit debug:response"
         );
     }
 }

@@ -124,8 +124,7 @@ impl SkillManageHandler {
         if recommendation == "discard" || overall_score < ACTIVATION_THRESHOLD {
             info!(
                 component,
-                new_version,
-                "self-upgrade rejected (below threshold or recommendation=discard)"
+                new_version, "self-upgrade rejected (below threshold or recommendation=discard)"
             );
             return Ok(json!({
                 "build_type": "self_upgrade",

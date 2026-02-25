@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -66,8 +66,7 @@ pub fn is_self_upgrade(metadata: &Value) -> bool {
 
 /// Resolve `~/.evo-agents` respecting `EVO_HOME` env var.
 pub fn evo_home() -> PathBuf {
-    let raw = std::env::var("EVO_HOME")
-        .unwrap_or_else(|_| "~/.evo-agents".to_string());
+    let raw = std::env::var("EVO_HOME").unwrap_or_else(|_| "~/.evo-agents".to_string());
     if raw.starts_with("~/") {
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(format!("{home}{}", &raw[1..]));
@@ -81,8 +80,7 @@ pub fn load_repos_json() -> Result<ReposJson> {
     let path = evo_home().join("repos.json");
     let content = std::fs::read_to_string(&path)
         .with_context(|| format!("Failed to read {}", path.display()))?;
-    serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))
+    serde_json::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))
 }
 
 /// Run a shell command and return stdout, failing on non-zero exit.
@@ -95,7 +93,9 @@ pub async fn run_cmd(program: &str, args: &[&str], cwd: Option<&Path>) -> Result
 
     info!(cmd = %program, args = ?args, "running command");
 
-    let output = cmd.output().await
+    let output = cmd
+        .output()
+        .await
         .with_context(|| format!("Failed to spawn: {program} {}", args.join(" ")))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -109,9 +109,7 @@ pub async fn run_cmd(program: &str, args: &[&str], cwd: Option<&Path>) -> Result
             stderr = %stderr,
             "command failed"
         );
-        bail!(
-            "{program} exited with code {code}: {stderr}"
-        );
+        bail!("{program} exited with code {code}: {stderr}");
     }
 
     if !stderr.is_empty() {
@@ -124,15 +122,25 @@ pub async fn run_cmd(program: &str, args: &[&str], cwd: Option<&Path>) -> Result
 /// Detect the current platform target triple.
 pub fn detect_target() -> &'static str {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    { "x86_64-unknown-linux-gnu" }
+    {
+        "x86_64-unknown-linux-gnu"
+    }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    { "aarch64-unknown-linux-gnu" }
+    {
+        "aarch64-unknown-linux-gnu"
+    }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    { "x86_64-apple-darwin" }
+    {
+        "x86_64-apple-darwin"
+    }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    { "aarch64-apple-darwin" }
+    {
+        "aarch64-apple-darwin"
+    }
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    { "x86_64-pc-windows-msvc" }
+    {
+        "x86_64-pc-windows-msvc"
+    }
     #[cfg(not(any(
         all(target_os = "linux", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "aarch64"),
@@ -140,7 +148,9 @@ pub fn detect_target() -> &'static str {
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "windows", target_arch = "x86_64"),
     )))]
-    { "unknown-unknown-unknown" }
+    {
+        "unknown-unknown-unknown"
+    }
 }
 
 // ─── Build Stage ────────────────────────────────────────────────────────────
@@ -153,12 +163,11 @@ pub fn detect_target() -> &'static str {
 /// 3. `cargo build --release`
 /// 4. Package binary + soul.md + skills/ into .tar.gz
 /// 5. `gh release create` to publish
-pub async fn build_and_release(
-    component: &str,
-    new_version: &str,
-) -> Result<BuildResult> {
+pub async fn build_and_release(component: &str, new_version: &str) -> Result<BuildResult> {
     let repos = load_repos_json()?;
-    let entry = repos.repos.get(component)
+    let entry = repos
+        .repos
+        .get(component)
         .with_context(|| format!("Component '{component}' not found in repos.json"))?;
 
     let repo_path = resolve_path(&entry.local_path);
@@ -166,7 +175,11 @@ pub async fn build_and_release(
         bail!("Repo path does not exist: {}", repo_path.display());
     }
 
-    info!(component, version = new_version, "starting self-upgrade build");
+    info!(
+        component,
+        version = new_version,
+        "starting self-upgrade build"
+    );
 
     // 1. git pull
     run_cmd("git", &["pull", "origin", "main"], Some(&repo_path)).await?;
@@ -177,7 +190,12 @@ pub async fn build_and_release(
     } else {
         vec!["build", "--release"]
     };
-    run_cmd("cargo", &build_args.iter().map(|s| *s).collect::<Vec<_>>(), Some(&repo_path)).await?;
+    run_cmd(
+        "cargo",
+        &build_args.iter().map(|s| *s).collect::<Vec<_>>(),
+        Some(&repo_path),
+    )
+    .await?;
 
     // 3. Determine binary name
     let binary_name = if entry.repo_type == "kernel-agent" {
@@ -186,15 +204,10 @@ pub async fn build_and_release(
         component.to_string()
     };
 
-    let release_binary = repo_path
-        .join("target/release")
-        .join(&binary_name);
+    let release_binary = repo_path.join("target/release").join(&binary_name);
 
     if !release_binary.exists() {
-        bail!(
-            "Built binary not found at: {}",
-            release_binary.display()
-        );
+        bail!("Built binary not found at: {}", release_binary.display());
     }
 
     // 4. Package archive
@@ -219,9 +232,15 @@ pub async fn build_and_release(
     if skills_src.is_dir() {
         run_cmd(
             "cp",
-            &["-r", &skills_src.to_string_lossy(), &staging_dir.to_string_lossy()],
+            &[
+                "-r",
+                &skills_src.to_string_lossy(),
+                &staging_dir.to_string_lossy(),
+            ],
             None,
-        ).await.ok(); // non-fatal
+        )
+        .await
+        .ok(); // non-fatal
     }
 
     // Create tar.gz
@@ -235,10 +254,13 @@ pub async fn build_and_release(
             component,
         ],
         None,
-    ).await?;
+    )
+    .await?;
 
     // Clean up staging
-    tokio::fs::remove_dir_all(repo_path.join("staging")).await.ok();
+    tokio::fs::remove_dir_all(repo_path.join("staging"))
+        .await
+        .ok();
 
     // 5. gh release create
     let gh_repo = &entry.github;
@@ -247,14 +269,20 @@ pub async fn build_and_release(
     let gh_result = run_cmd(
         "gh",
         &[
-            "release", "create", new_version,
-            "--repo", gh_repo,
-            "--title", &format!("Release {new_version}"),
-            "--notes", &format!("Auto-release {new_version} via self-upgrade pipeline"),
+            "release",
+            "create",
+            new_version,
+            "--repo",
+            gh_repo,
+            "--title",
+            &format!("Release {new_version}"),
+            "--notes",
+            &format!("Auto-release {new_version} via self-upgrade pipeline"),
             &archive_path.to_string_lossy(),
         ],
         Some(&repo_path),
-    ).await;
+    )
+    .await;
 
     match gh_result {
         Ok(output) => info!(output = %output.trim(), "GitHub release created"),
@@ -264,13 +292,18 @@ pub async fn build_and_release(
             run_cmd(
                 "gh",
                 &[
-                    "release", "upload", new_version,
-                    "--repo", gh_repo,
+                    "release",
+                    "upload",
+                    new_version,
+                    "--repo",
+                    gh_repo,
                     "--clobber",
                     &archive_path.to_string_lossy(),
                 ],
                 Some(&repo_path),
-            ).await.ok();
+            )
+            .await
+            .ok();
         }
     }
 
@@ -305,7 +338,9 @@ pub async fn validate_release(
     archive_path_or_url: &str,
 ) -> Result<ValidationResult> {
     let home = evo_home();
-    let temp_dir = home.join("data").join(format!("validate-{component}-{version}"));
+    let temp_dir = home
+        .join("data")
+        .join(format!("validate-{component}-{version}"));
     tokio::fs::create_dir_all(&temp_dir).await?;
 
     info!(component, version, "validating release archive");
@@ -322,9 +357,15 @@ pub async fn validate_release(
     // Extract
     run_cmd(
         "tar",
-        &["xzf", &archive_path.to_string_lossy(), "-C", &temp_dir.to_string_lossy()],
+        &[
+            "xzf",
+            &archive_path.to_string_lossy(),
+            "-C",
+            &temp_dir.to_string_lossy(),
+        ],
         None,
-    ).await?;
+    )
+    .await?;
 
     // The archive should contain a folder named after the component
     let extracted_dir = temp_dir.join(component);
@@ -349,25 +390,26 @@ pub async fn validate_release(
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            binary_path.metadata()
+            binary_path
+                .metadata()
                 .map(|m| m.permissions().mode() & 0o111 != 0)
                 .unwrap_or(false)
         }
         #[cfg(not(unix))]
-        { true }
+        {
+            true
+        }
     } else {
         false
     };
 
     let soul_md_exists = extracted_dir.join("soul.md").exists();
-    let skills_dir_exists = extracted_dir.join("skills").exists() || extracted_dir.join("skills").is_dir();
+    let skills_dir_exists =
+        extracted_dir.join("skills").exists() || extracted_dir.join("skills").is_dir();
 
     // Health check: try running binary with --version or --help
     let health_check_passed = if binary_exists && binary_executable {
-        let result = Command::new(&binary_path)
-            .arg("--help")
-            .output()
-            .await;
+        let result = Command::new(&binary_path).arg("--help").output().await;
         match result {
             Ok(output) => output.status.success() || output.status.code() == Some(0),
             Err(_) => {
@@ -406,10 +448,7 @@ pub async fn validate_release(
 // ─── Evaluation Stage ───────────────────────────────────────────────────────
 
 /// Evaluate a self-upgrade release by comparing to current.
-pub async fn evaluate_upgrade(
-    component: &str,
-    new_version: &str,
-) -> Result<Value> {
+pub async fn evaluate_upgrade(component: &str, new_version: &str) -> Result<Value> {
     let repos = load_repos_json()?;
     let entry = repos.repos.get(component);
 
@@ -418,11 +457,10 @@ pub async fn evaluate_upgrade(
         .unwrap_or_else(|| "unknown".to_string());
 
     // Check binary size (if current binary exists)
-    let current_size = entry
-        .and_then(|e| {
-            let p = resolve_path(&e.binary_path);
-            std::fs::metadata(p).ok().map(|m| m.len())
-        });
+    let current_size = entry.and_then(|e| {
+        let p = resolve_path(&e.binary_path);
+        std::fs::metadata(p).ok().map(|m| m.len())
+    });
 
     info!(
         component,

@@ -106,9 +106,7 @@ impl PreLoadHandler {
         let component = ctx.metadata["component"]
             .as_str()
             .unwrap_or(&ctx.artifact_id);
-        let new_version = ctx.metadata["new_version"]
-            .as_str()
-            .unwrap_or("v0.0.0");
+        let new_version = ctx.metadata["new_version"].as_str().unwrap_or("v0.0.0");
         let archive_path = ctx.metadata["archive_path"]
             .as_str()
             .or_else(|| ctx.metadata["release_url"].as_str())
@@ -121,11 +119,7 @@ impl PreLoadHandler {
             "pre-load agent: validating self-upgrade release"
         );
 
-        let result = self_upgrade::validate_release(
-            component,
-            new_version,
-            archive_path,
-        ).await?;
+        let result = self_upgrade::validate_release(component, new_version, archive_path).await?;
 
         if !result.all_passed {
             return Err(anyhow::anyhow!(
