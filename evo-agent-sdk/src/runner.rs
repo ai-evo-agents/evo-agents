@@ -376,20 +376,46 @@ async fn dispatch_debug_prompt(
         agent_id = %agent_id,
         request_id = %request_id,
         model = %full_model,
-        "processing debug prompt"
+        "processing debug prompt (streaming)"
     );
 
     let start = std::time::Instant::now();
 
+    // Channel to bridge sync on_chunk callback to async Socket.IO emit
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, u32)>();
+
+    // Spawn a task to forward stream chunks via Socket.IO
+    let socket_clone = socket.clone();
+    let req_id_clone = request_id.clone();
+    let emit_task = tokio::spawn(async move {
+        while let Some((delta, chunk_index)) = rx.recv().await {
+            let chunk_payload = json!({
+                "request_id": req_id_clone,
+                "delta": delta,
+                "chunk_index": chunk_index,
+            });
+            if let Err(e) = socket_clone.emit(events::DEBUG_STREAM, chunk_payload).await {
+                warn!(err = %e, "failed to emit debug:stream chunk");
+            }
+        }
+    });
+
     let result = gateway
-        .chat_completion(
+        .chat_completion_streaming(
             &full_model,
             &soul.behavior,
             &prompt,
             temperature,
             max_tokens,
+            |delta: &str, chunk_index: u32| {
+                let _ = tx.send((delta.to_string(), chunk_index));
+            },
         )
         .await;
+
+    // Drop sender so the emit task drains remaining chunks and exits
+    drop(tx);
+    let _ = emit_task.await;
 
     let latency_ms = start.elapsed().as_millis() as u64;
 
@@ -406,7 +432,7 @@ async fn dispatch_debug_prompt(
             error!(
                 request_id = %request_id,
                 err = %e,
-                "debug prompt failed"
+                "debug prompt streaming failed"
             );
             json!({
                 "request_id": request_id,

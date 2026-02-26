@@ -292,6 +292,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "evo-common",
+ "futures-util",
  "reqwest",
  "rust_socketio",
  "serde",
