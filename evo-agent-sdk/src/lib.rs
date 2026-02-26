@@ -55,7 +55,7 @@ pub mod soul;
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
 pub use gateway_client::GatewayClient;
-pub use handler::{AgentHandler, CommandContext, PipelineContext};
+pub use handler::{AgentHandler, CommandContext, PipelineContext, TaskEvaluateContext};
 pub use runner::AgentRunner;
 pub use skill_engine::LoadedSkill;
 pub use soul::Soul;
@@ -72,7 +72,7 @@ pub use evo_common;
 /// ```
 pub mod prelude {
     pub use crate::gateway_client::GatewayClient;
-    pub use crate::handler::{AgentHandler, CommandContext, PipelineContext};
+    pub use crate::handler::{AgentHandler, CommandContext, PipelineContext, TaskEvaluateContext};
     pub use crate::runner::AgentRunner;
     pub use crate::skill_engine::LoadedSkill;
     pub use crate::soul::Soul;

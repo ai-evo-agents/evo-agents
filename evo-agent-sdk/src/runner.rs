@@ -6,7 +6,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
 use crate::gateway_client::GatewayClient;
-use crate::handler::{AgentHandler, CommandContext, PipelineContext};
+use crate::handler::{AgentHandler, CommandContext, PipelineContext, TaskEvaluateContext};
 use crate::health_check;
 use crate::kernel_handlers::*;
 use crate::skill_engine::{self, LoadedSkill};
@@ -157,6 +157,15 @@ async fn run_client<H: AgentHandler>(
     let id_debug = agent_id.clone();
     let role_debug = role.clone();
 
+    // Clones for task:invite handler
+    let id_invite = agent_id.clone();
+
+    // Clones for task:evaluate handler
+    let soul_eval = soul.clone();
+    let gateway_eval = Arc::clone(gateway);
+    let handler_eval = Arc::clone(&handler);
+    let id_eval = agent_id.clone();
+
     let socket = ClientBuilder::new(king_address)
         .namespace("/")
         // Dispatch king:command via handler
@@ -201,6 +210,33 @@ async fn run_client<H: AgentHandler>(
             Box::pin(async move {
                 if let Some(data) = payload_to_json(&payload) {
                     dispatch_debug_prompt(&soul, &data, &socket, &gateway, &id, &r).await;
+                }
+            })
+        })
+        .on(events::TASK_INVITE, move |payload, socket| {
+            let id = id_invite.clone();
+            Box::pin(async move {
+                if let Some(data) = payload_to_json(&payload) {
+                    let task_id = data["task_id"].as_str().unwrap_or("");
+                    if !task_id.is_empty() {
+                        let join_payload = json!({ "task_id": task_id, "agent_id": id });
+                        if let Err(e) = socket.emit(events::TASK_JOIN, join_payload).await {
+                            warn!(err = %e, "failed to emit task:join");
+                        } else {
+                            info!(task_id = %task_id, "joined task room");
+                        }
+                    }
+                }
+            })
+        })
+        .on(events::TASK_EVALUATE, move |payload, socket| {
+            let soul = soul_eval.clone();
+            let gateway = Arc::clone(&gateway_eval);
+            let h = Arc::clone(&handler_eval);
+            let agent_id = id_eval.clone();
+            Box::pin(async move {
+                if let Some(data) = payload_to_json(&payload) {
+                    dispatch_task_evaluate(&soul, &data, &socket, &gateway, &agent_id, &*h).await;
                 }
             })
         })
@@ -350,6 +386,55 @@ async fn dispatch_pipeline(
     }
 }
 
+// ─── Task evaluate dispatch ──────────────────────────────────────────────────
+
+async fn dispatch_task_evaluate(
+    soul: &Soul,
+    data: &Value,
+    socket: &rust_socketio::asynchronous::Client,
+    gateway: &Arc<GatewayClient>,
+    agent_id: &str,
+    handler: &dyn AgentHandler,
+) {
+    let task_id = data["task_id"].as_str().unwrap_or("unknown").to_string();
+    let task_type = data["task_type"].as_str().unwrap_or("unknown").to_string();
+    let output_summary = data["output_summary"].as_str().unwrap_or("").to_string();
+    let exit_code = data["exit_code"].as_i64().map(|n| n as i32);
+    let latency_ms = data["latency_ms"].as_u64();
+    let metadata = data.get("metadata").cloned().unwrap_or(Value::Null);
+
+    info!(task_id = %task_id, task_type = %task_type, role = %soul.role, "processing task:evaluate");
+
+    let ctx = TaskEvaluateContext {
+        soul,
+        gateway,
+        task_id: task_id.clone(),
+        task_type,
+        output_summary,
+        exit_code,
+        latency_ms,
+        metadata,
+    };
+
+    match handler.on_task_evaluate(ctx).await {
+        Ok(Value::Null) => {} // no-op
+        Ok(output) => {
+            let summary_payload = json!({
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "summary": output["summary"].as_str().unwrap_or(""),
+                "score": output["score"].as_f64(),
+                "tags": output.get("tags").cloned().unwrap_or(json!([])),
+                "evaluation": output,
+            });
+            if let Err(e) = socket.emit(events::TASK_SUMMARY, summary_payload).await {
+                error!(task_id = %task_id, err = %e, "failed to emit task:summary");
+            }
+        }
+        Err(e) => warn!(task_id = %task_id, err = %e, "task evaluation failed"),
+    }
+}
+
 // ─── Debug prompt dispatch ────────────────────────────────────────────────────
 
 async fn dispatch_debug_prompt(
@@ -361,6 +446,7 @@ async fn dispatch_debug_prompt(
     role: &str,
 ) {
     let request_id = data["request_id"].as_str().unwrap_or("unknown").to_string();
+    let task_id = data["task_id"].as_str().map(|s| s.to_string());
     let model = data["model"].as_str().unwrap_or("gpt-4o-mini").to_string();
     let prompt = data["prompt"].as_str().unwrap_or("").to_string();
     let temperature = data["temperature"].as_f64();
@@ -387,13 +473,17 @@ async fn dispatch_debug_prompt(
     // Spawn a task to forward stream chunks via Socket.IO
     let socket_clone = socket.clone();
     let req_id_clone = request_id.clone();
+    let task_id_clone = task_id.clone();
     let emit_task = tokio::spawn(async move {
         while let Some((delta, chunk_index)) = rx.recv().await {
-            let chunk_payload = json!({
+            let mut chunk_payload = json!({
                 "request_id": req_id_clone,
                 "delta": delta,
                 "chunk_index": chunk_index,
             });
+            if let Some(ref tid) = task_id_clone {
+                chunk_payload["task_id"] = json!(tid);
+            }
             if let Err(e) = socket_clone.emit(events::DEBUG_STREAM, chunk_payload).await {
                 warn!(err = %e, "failed to emit debug:stream chunk");
             }
@@ -420,28 +510,38 @@ async fn dispatch_debug_prompt(
     let latency_ms = start.elapsed().as_millis() as u64;
 
     let response = match result {
-        Ok(text) => json!({
-            "request_id": request_id,
-            "agent_id": agent_id,
-            "role": role,
-            "model": full_model,
-            "response": text,
-            "latency_ms": latency_ms,
-        }),
+        Ok(text) => {
+            let mut payload = json!({
+                "request_id": request_id,
+                "agent_id": agent_id,
+                "role": role,
+                "model": full_model,
+                "response": text,
+                "latency_ms": latency_ms,
+            });
+            if let Some(ref tid) = task_id {
+                payload["task_id"] = json!(tid);
+            }
+            payload
+        }
         Err(e) => {
             error!(
                 request_id = %request_id,
                 err = %e,
                 "debug prompt streaming failed"
             );
-            json!({
+            let mut payload = json!({
                 "request_id": request_id,
                 "agent_id": agent_id,
                 "role": role,
                 "model": full_model,
                 "error": e.to_string(),
                 "latency_ms": latency_ms,
-            })
+            });
+            if let Some(ref tid) = task_id {
+                payload["task_id"] = json!(tid);
+            }
+            payload
         }
     };
 

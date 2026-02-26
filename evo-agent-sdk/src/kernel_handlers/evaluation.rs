@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tracing::info;
 
-use crate::handler::{AgentHandler, PipelineContext};
+use crate::handler::{AgentHandler, PipelineContext, TaskEvaluateContext};
 use crate::self_upgrade;
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -25,6 +25,59 @@ impl AgentHandler for EvaluationHandler {
         }
 
         self.evaluate_skill(&ctx).await
+    }
+
+    async fn on_task_evaluate(&self, ctx: TaskEvaluateContext<'_>) -> anyhow::Result<Value> {
+        // Skip pipeline tasks — those are handled by on_pipeline
+        if ctx.task_type == "pipeline" {
+            return Ok(Value::Null);
+        }
+
+        info!(task_id = %ctx.task_id, task_type = %ctx.task_type, "evaluating task output");
+
+        let exit_info = match ctx.exit_code {
+            Some(code) => format!("Exit code: {code}"),
+            None => "No exit code (LLM prompt)".to_string(),
+        };
+        let latency_info = ctx
+            .latency_ms
+            .map(|ms| format!("Latency: {ms}ms"))
+            .unwrap_or_default();
+
+        let prompt = format!(
+            "You are a task evaluator for an AI self-evolution system.\n\
+             Evaluate the following task output and produce a brief summary.\n\n\
+             Task type: {task_type}\n{exit_info}\n{latency_info}\n\n\
+             Output (truncated):\n```\n{output}\n```\n\n\
+             Respond with valid JSON containing:\n\
+             - summary: 1-2 sentence summary of what happened\n\
+             - score: 0.0-1.0 quality/success score\n\
+             - tags: array of relevant tags\n\
+             - learnings: any patterns or facts worth remembering",
+            task_type = ctx.task_type,
+            output = &ctx.output_summary[..ctx.output_summary.len().min(4000)],
+        );
+
+        let response = ctx
+            .gateway
+            .chat_completion(
+                DEFAULT_MODEL,
+                &ctx.soul.behavior,
+                &prompt,
+                Some(0.3),
+                Some(512),
+            )
+            .await?;
+
+        let evaluation = serde_json::from_str::<Value>(&response)
+            .unwrap_or_else(|_| json!({ "summary": response, "score": 0.5, "tags": [] }));
+
+        Ok(json!({
+            "summary": evaluation["summary"].as_str().unwrap_or("Task completed"),
+            "score": evaluation["score"].as_f64().unwrap_or(0.5),
+            "tags": evaluation.get("tags").cloned().unwrap_or(json!([])),
+            "evaluation": evaluation,
+        }))
     }
 }
 

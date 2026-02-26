@@ -26,6 +26,18 @@ pub struct CommandContext<'a> {
     pub data: Value,
 }
 
+/// Context provided to [`AgentHandler::on_task_evaluate`] for task evaluation events.
+pub struct TaskEvaluateContext<'a> {
+    pub soul: &'a Soul,
+    pub gateway: &'a Arc<GatewayClient>,
+    pub task_id: String,
+    pub task_type: String,
+    pub output_summary: String,
+    pub exit_code: Option<i32>,
+    pub latency_ms: Option<u64>,
+    pub metadata: Value,
+}
+
 // ─── AgentHandler trait ──────────────────────────────────────────────────────
 
 /// Trait for handling agent events.
@@ -64,5 +76,11 @@ pub trait AgentHandler: Send + Sync + 'static {
             command = %ctx.data["command"].as_str().unwrap_or("unknown"),
             "king command received"
         );
+    }
+
+    /// Handle a `task:evaluate` event. Override to produce task summaries.
+    /// Default implementation is a no-op (returns `Value::Null`).
+    async fn on_task_evaluate(&self, _ctx: TaskEvaluateContext<'_>) -> anyhow::Result<Value> {
+        Ok(Value::Null)
     }
 }
