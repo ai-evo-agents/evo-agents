@@ -251,11 +251,19 @@ async fn run_client<H: AgentHandler>(
 
     // ── Registration ─────────────────────────────────────────────────────────
     info!(agent_id = %agent_id, role = %role, "connected to king, sending registration");
+    let binary_path = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
+
     let reg_payload = json!({
-        "agent_id":     agent_id.clone(),
-        "role":         role.clone(),
-        "capabilities": capabilities,
-        "skills":       skill_names,
+        "agent_id":      agent_id.clone(),
+        "role":          role.clone(),
+        "capabilities":  capabilities,
+        "skills":        skill_names,
+        "soul_content":  soul.body.clone(),
+        "version":       version,
+        "binary_path":   binary_path,
     });
     if let Err(e) = socket.emit(events::AGENT_REGISTER, reg_payload).await {
         warn!(err = %e, "initial registration emit failed — will retry on next heartbeat");

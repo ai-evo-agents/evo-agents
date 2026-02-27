@@ -111,11 +111,14 @@ This ensures the runner can reach king via both Socket.IO (for events) and HTTP 
     "agent_id": "learning-learning",
     "role": "learning",
     "capabilities": ["discover", "evaluate"],
-    "skills": ["web-search", "summarize"]
+    "skills": ["web-search", "summarize"],
+    "soul_content": "# Learning Agent\n\n## Role\nlearning\n\n## Behavior\n...",
+    "version": "0.4.0",
+    "binary_path": "/Users/user/.evo-agents/evo-kernel-agent-learning/evo-agent-learning"
 }
 ```
 
-Capabilities are aggregated from all loaded skill manifests (deduplicated), and skills lists the names of all loaded skills.
+Capabilities are aggregated from all loaded skill manifests (deduplicated), and skills lists the names of all loaded skills. The `soul_content`, `version`, and `binary_path` fields are sent to king for persistence in the agent_status table, enabling robust self-upgrade and debugging. These fields are backward-compatible — king handles their absence gracefully.
 
 ## Agent Folder Structure
 
