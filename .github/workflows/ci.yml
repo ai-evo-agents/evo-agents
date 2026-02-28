@@ -28,7 +28,7 @@ jobs:
       - name: Patch path dependency for CI
         shell: bash
         run: |
-          sed -i.bak 's|{ path = "\.\./\.\./evo-common" }|{ path = "../evo-common" }|' evo-agent-sdk/Cargo.toml
+          sed -i.bak 's|path = "\.\./\.\./evo-common"|path = "../evo-common"|' evo-agent-sdk/Cargo.toml
           rm -f evo-agent-sdk/Cargo.toml.bak
 
       - uses: dtolnay/rust-toolchain@stable
