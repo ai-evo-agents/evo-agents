@@ -9,7 +9,7 @@ keywords = ["agents", "ai", "self-evolution", "sdk"]
 categories = ["development-tools"]
 
 [dependencies]
-evo-common         = { path = "../../evo-common" }
+evo-common         = { path = "../../evo-common", features = ["tracing-otel"] }
 rust_socketio      = { version = "0.6", features = ["async"] }
 tokio              = { version = "1", features = ["full"] }
 reqwest            = { version = "0.12", features = ["json", "native-tls-vendored", "stream"] }

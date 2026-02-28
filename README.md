@@ -281,7 +281,7 @@ The runner reads `soul.md` from the provided folder, connects to king, and begin
 | toml | 0.8 | TOML parsing for manifests and configs |
 | tracing | 0.1 | Structured logging |
 | tracing-subscriber | 0.3 | Log output formatting |
-| evo-common | 0.1 (crates.io) | Shared types (SkillManifest, SkillConfig, AgentRole, etc.) |
+| evo-common | 0.7 (tracing-otel feature) | Shared types + OTel logging (`init_logging_with_otel`) |
 
 ## License
 

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use evo_common::{logging::init_logging, messages::events};
+use evo_common::{logging::init_logging_with_otel, messages::events};
 use rust_socketio::{Payload, asynchronous::ClientBuilder};
 use serde_json::{Value, json};
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
@@ -49,8 +49,10 @@ impl AgentRunner {
         let soul = soul::load_soul(&agent_dir)
             .with_context(|| format!("Failed to load soul from {}", agent_dir.display()))?;
 
-        // Init logging using role as component name (→ logs/<role>.log)
-        let _log_guard = init_logging(&soul.role);
+        // Init logging with OpenTelemetry (→ logs/<role>.log + OTLP export)
+        let otlp_endpoint = std::env::var("EVO_OTLP_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:3300".to_string());
+        let (_log_guard, _otel_guard) = init_logging_with_otel(&soul.role, &otlp_endpoint);
 
         info!(
             agent_id = %soul.agent_id,
