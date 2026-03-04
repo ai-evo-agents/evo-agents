@@ -6,7 +6,10 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use tracing::{error, info, warn};
 
 use crate::gateway_client::GatewayClient;
-use crate::handler::{AgentHandler, CommandContext, PipelineContext, TaskEvaluateContext};
+use crate::handler::{
+    AgentHandler, CommandContext, DecomposeContext, ErrorRecoveryContext, PipelineContext,
+    TaskEvaluateContext,
+};
 use crate::health_check;
 use crate::kernel_handlers::*;
 use crate::skill_engine::{self, LoadedSkill};
@@ -168,6 +171,18 @@ async fn run_client<H: AgentHandler>(
     let handler_eval = Arc::clone(&handler);
     let id_eval = agent_id.clone();
 
+    // Clones for error:recovery_request handler
+    let soul_recovery = soul.clone();
+    let gateway_recovery = Arc::clone(gateway);
+    let handler_recovery = Arc::clone(&handler);
+    let id_recovery = agent_id.clone();
+
+    // Clones for task:decompose handler
+    let soul_decompose = soul.clone();
+    let gateway_decompose = Arc::clone(gateway);
+    let handler_decompose = Arc::clone(&handler);
+    let id_decompose = agent_id.clone();
+
     let socket = ClientBuilder::new(king_address)
         .namespace("/")
         // Dispatch king:command via handler
@@ -239,6 +254,28 @@ async fn run_client<H: AgentHandler>(
             Box::pin(async move {
                 if let Some(data) = payload_to_json(&payload) {
                     dispatch_task_evaluate(&soul, &data, &socket, &gateway, &agent_id, &*h).await;
+                }
+            })
+        })
+        .on(events::ERROR_RECOVERY_REQUEST, move |payload, socket| {
+            let soul = soul_recovery.clone();
+            let gateway = Arc::clone(&gateway_recovery);
+            let h = Arc::clone(&handler_recovery);
+            let agent_id = id_recovery.clone();
+            Box::pin(async move {
+                if let Some(data) = payload_to_json(&payload) {
+                    dispatch_error_recovery(&soul, &data, &socket, &gateway, &agent_id, &*h).await;
+                }
+            })
+        })
+        .on(events::TASK_DECOMPOSE, move |payload, socket| {
+            let soul = soul_decompose.clone();
+            let gateway = Arc::clone(&gateway_decompose);
+            let h = Arc::clone(&handler_decompose);
+            let agent_id = id_decompose.clone();
+            Box::pin(async move {
+                if let Some(data) = payload_to_json(&payload) {
+                    dispatch_decompose(&soul, &data, &socket, &gateway, &agent_id, &*h).await;
                 }
             })
         })
@@ -561,6 +598,137 @@ async fn dispatch_debug_prompt(
             err = %e,
             "failed to emit debug:response"
         );
+    }
+}
+
+// ─── Error recovery dispatch ─────────────────────────────────────────────────
+
+async fn dispatch_error_recovery(
+    soul: &Soul,
+    data: &Value,
+    socket: &rust_socketio::asynchronous::Client,
+    gateway: &Arc<GatewayClient>,
+    agent_id: &str,
+    handler: &dyn AgentHandler,
+) {
+    let request_id = data["request_id"].as_str().unwrap_or("unknown").to_string();
+    let run_id = data["run_id"].as_str().unwrap_or("").to_string();
+    let task_id = data["task_id"].as_str().unwrap_or("").to_string();
+
+    info!(
+        agent_id = %agent_id,
+        request_id = %request_id,
+        run_id = %run_id,
+        task_id = %task_id,
+        "processing error:recovery_request"
+    );
+
+    let ctx = ErrorRecoveryContext {
+        soul,
+        gateway,
+        request_id: request_id.clone(),
+        run_id: run_id.clone(),
+        task_id: task_id.clone(),
+        failed_stage: data["failed_stage"].as_str().unwrap_or("").to_string(),
+        error_message: data["error_message"].as_str().unwrap_or("").to_string(),
+        stage_output: data.get("stage_output").cloned().unwrap_or(Value::Null),
+        retry_count: data["retry_count"].as_u64().unwrap_or(0) as u32,
+        task_summary: data["task_summary"].as_str().unwrap_or("").to_string(),
+    };
+
+    match handler.on_error_recovery(ctx).await {
+        Ok(output) => {
+            let response = json!({
+                "request_id": request_id,
+                "run_id": run_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "action": output["action"].as_str().unwrap_or("abort"),
+                "params": output.get("params").cloned().unwrap_or(json!({})),
+                "reasoning": output["reasoning"].as_str().unwrap_or(""),
+            });
+            if let Err(e) = socket.emit(events::ERROR_RECOVERY_RESPONSE, response).await {
+                error!(err = %e, "failed to emit error:recovery_response");
+            }
+        }
+        Err(e) => {
+            warn!(request_id = %request_id, err = %e, "error recovery handler failed");
+            let fallback = json!({
+                "request_id": request_id,
+                "run_id": run_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "action": "abort",
+                "params": {},
+                "reasoning": format!("handler error: {e}"),
+            });
+            let _ = socket.emit(events::ERROR_RECOVERY_RESPONSE, fallback).await;
+        }
+    }
+}
+
+// ─── Task decompose dispatch ─────────────────────────────────────────────────
+
+async fn dispatch_decompose(
+    soul: &Soul,
+    data: &Value,
+    socket: &rust_socketio::asynchronous::Client,
+    gateway: &Arc<GatewayClient>,
+    agent_id: &str,
+    handler: &dyn AgentHandler,
+) {
+    let request_id = data["request_id"].as_str().unwrap_or("unknown").to_string();
+    let run_id = data["run_id"].as_str().unwrap_or("").to_string();
+    let task_id = data["task_id"].as_str().unwrap_or("").to_string();
+
+    info!(
+        agent_id = %agent_id,
+        request_id = %request_id,
+        task_id = %task_id,
+        "processing task:decompose"
+    );
+
+    let ctx = DecomposeContext {
+        soul,
+        gateway,
+        request_id: request_id.clone(),
+        run_id: run_id.clone(),
+        task_id: task_id.clone(),
+        task_type: data["task_type"].as_str().unwrap_or("").to_string(),
+        summary: data["summary"].as_str().unwrap_or("").to_string(),
+        payload: data.get("payload").cloned().unwrap_or(Value::Null),
+        context: data.get("context").cloned().unwrap_or(Value::Null),
+        trigger: data["trigger"].as_str().unwrap_or("manual").to_string(),
+    };
+
+    match handler.on_decompose(ctx).await {
+        Ok(output) => {
+            let response = json!({
+                "request_id": request_id,
+                "run_id": run_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "should_decompose": output["should_decompose"].as_bool().unwrap_or(false),
+                "subtasks": output.get("subtasks").cloned().unwrap_or(json!([])),
+                "reasoning": output["reasoning"].as_str().unwrap_or(""),
+            });
+            if let Err(e) = socket.emit(events::TASK_DECOMPOSE_RESULT, response).await {
+                error!(err = %e, "failed to emit task:decompose_result");
+            }
+        }
+        Err(e) => {
+            warn!(request_id = %request_id, err = %e, "decompose handler failed");
+            let fallback = json!({
+                "request_id": request_id,
+                "run_id": run_id,
+                "task_id": task_id,
+                "agent_id": agent_id,
+                "should_decompose": false,
+                "subtasks": [],
+                "reasoning": format!("handler error: {e}"),
+            });
+            let _ = socket.emit(events::TASK_DECOMPOSE_RESULT, fallback).await;
+        }
     }
 }
 

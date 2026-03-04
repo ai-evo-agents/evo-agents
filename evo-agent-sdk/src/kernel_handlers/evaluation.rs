@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tracing::info;
 
-use crate::handler::{AgentHandler, PipelineContext, TaskEvaluateContext};
+use crate::handler::{
+    AgentHandler, DecomposeContext, ErrorRecoveryContext, PipelineContext, TaskEvaluateContext,
+};
 use crate::self_upgrade;
 
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
@@ -77,6 +79,143 @@ impl AgentHandler for EvaluationHandler {
             "score": evaluation["score"].as_f64().unwrap_or(0.5),
             "tags": evaluation.get("tags").cloned().unwrap_or(json!([])),
             "evaluation": evaluation,
+        }))
+    }
+
+    async fn on_error_recovery(&self, ctx: ErrorRecoveryContext<'_>) -> anyhow::Result<Value> {
+        info!(
+            request_id = %ctx.request_id,
+            run_id = %ctx.run_id,
+            task_id = %ctx.task_id,
+            failed_stage = %ctx.failed_stage,
+            retry_count = %ctx.retry_count,
+            "evaluation agent: analyzing pipeline failure"
+        );
+
+        let prompt = format!(
+            "You are an error analyst for an AI self-evolution pipeline.\n\
+             A pipeline stage has failed. Analyze the error and recommend ONE action.\n\n\
+             Failed stage: {stage}\n\
+             Error message: {error}\n\
+             Retry count so far: {retry_count}\n\
+             Task summary: {summary}\n\
+             Stage output (truncated):\n```json\n{output}\n```\n\n\
+             Available actions:\n\
+             - retry: Retry the same stage (only if error seems transient, max 3 retries)\n\
+             - decompose: Break the task into smaller subtasks that might succeed individually\n\
+             - skip: Skip this stage and continue (only valid for evaluation and skill_manage)\n\
+             - abort: Stop the pipeline entirely (use when error is fundamental)\n\n\
+             Rules:\n\
+             - If retry_count >= 3, do NOT recommend retry\n\
+             - skip is only valid for evaluation and skill_manage stages\n\
+             - If recommending decompose, include a 'subtasks' array in params\n\
+             - If recommending retry, include any modified params in params\n\n\
+             Respond with valid JSON only: {{ \"action\": \"...\", \"reasoning\": \"...\", \"params\": {{}} }}",
+            stage = ctx.failed_stage,
+            error = ctx.error_message,
+            retry_count = ctx.retry_count,
+            summary = ctx.task_summary,
+            output = serde_json::to_string_pretty(&ctx.stage_output)
+                .unwrap_or_default()
+                .chars()
+                .take(3000)
+                .collect::<String>(),
+        );
+
+        let response = ctx
+            .gateway
+            .chat_completion(
+                DEFAULT_MODEL,
+                &ctx.soul.behavior,
+                &prompt,
+                Some(0.3),
+                Some(512),
+            )
+            .await?;
+
+        let result = serde_json::from_str::<Value>(&response)
+            .unwrap_or_else(|_| json!({ "action": "abort", "reasoning": response, "params": {} }));
+
+        // Normalize action string
+        let action = result["action"]
+            .as_str()
+            .unwrap_or("abort")
+            .trim()
+            .to_lowercase();
+
+        // Enforce guardrails
+        let final_action = match action.as_str() {
+            "retry" if ctx.retry_count >= 3 => "abort",
+            "skip" if ctx.failed_stage != "evaluation" && ctx.failed_stage != "skill_manage" => {
+                "abort"
+            }
+            "retry" | "decompose" | "skip" | "abort" => &action,
+            _ => "abort",
+        };
+
+        Ok(json!({
+            "action": final_action,
+            "reasoning": result["reasoning"].as_str().unwrap_or(""),
+            "params": result.get("params").cloned().unwrap_or(json!({})),
+        }))
+    }
+
+    async fn on_decompose(&self, ctx: DecomposeContext<'_>) -> anyhow::Result<Value> {
+        info!(
+            request_id = %ctx.request_id,
+            task_id = %ctx.task_id,
+            task_type = %ctx.task_type,
+            trigger = %ctx.trigger,
+            "evaluation agent: decomposing task"
+        );
+
+        let prompt = format!(
+            "You are a task decomposition agent for an AI self-evolution system.\n\
+             Analyze the following task and decide whether it should be broken into subtasks.\n\n\
+             Task type: {task_type}\n\
+             Summary: {summary}\n\
+             Trigger: {trigger}\n\
+             Payload (truncated):\n```json\n{payload}\n```\n\
+             Context (truncated):\n```json\n{context}\n```\n\n\
+             If the task is complex enough to benefit from decomposition, return subtasks.\n\
+             Each subtask must have: task_type (string), summary (string), payload (object).\n\
+             If the task is simple enough to execute directly, return empty subtasks.\n\n\
+             Respond with valid JSON only:\n\
+             {{ \"should_decompose\": true/false, \"reasoning\": \"...\", \"subtasks\": [...] }}",
+            task_type = ctx.task_type,
+            summary = ctx.summary,
+            trigger = ctx.trigger,
+            payload = serde_json::to_string_pretty(&ctx.payload)
+                .unwrap_or_default()
+                .chars()
+                .take(2000)
+                .collect::<String>(),
+            context = serde_json::to_string_pretty(&ctx.context)
+                .unwrap_or_default()
+                .chars()
+                .take(2000)
+                .collect::<String>(),
+        );
+
+        let response = ctx
+            .gateway
+            .chat_completion(
+                DEFAULT_MODEL,
+                &ctx.soul.behavior,
+                &prompt,
+                Some(0.3),
+                Some(1024),
+            )
+            .await?;
+
+        let result = serde_json::from_str::<Value>(&response).unwrap_or_else(
+            |_| json!({ "should_decompose": false, "subtasks": [], "reasoning": response }),
+        );
+
+        Ok(json!({
+            "should_decompose": result["should_decompose"].as_bool().unwrap_or(false),
+            "reasoning": result["reasoning"].as_str().unwrap_or(""),
+            "subtasks": result.get("subtasks").cloned().unwrap_or(json!([])),
         }))
     }
 }

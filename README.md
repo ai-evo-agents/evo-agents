@@ -72,6 +72,8 @@ Async pipeline handlers. When a `pipeline:next` event arrives, `dispatch_pipelin
 | `on_pre_load` | No | Health-checks all skill API endpoints |
 | `on_evaluation` | Yes | Scores skills across 4 dimensions (utility, reliability, novelty, integration) |
 | `on_skill_manage` | Yes | Activates or discards based on score threshold (0.6), plans deployment |
+| `on_error_recovery` | Yes | Analyzes pipeline failures and recommends recovery (retry/decompose/skip/abort) |
+| `on_decompose` | Yes | Analyzes task complexity and suggests subtask breakdown |
 
 All roles also handle `king:command` generically (logging only).
 
@@ -281,7 +283,7 @@ The runner reads `soul.md` from the provided folder, connects to king, and begin
 | toml | 0.8 | TOML parsing for manifests and configs |
 | tracing | 0.1 | Structured logging |
 | tracing-subscriber | 0.3 | Log output formatting |
-| evo-common | 0.7 (tracing-otel feature) | Shared types + OTel logging (`init_logging_with_otel`) |
+| evo-common | 0.11 (tracing-otel feature) | Shared types + OTel logging (`init_logging_with_otel`) |
 
 ## License
 

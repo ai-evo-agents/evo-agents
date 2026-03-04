@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "evo-agent-sdk"
-version = "0.4.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "evo-common"
-version = "0.7.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "opentelemetry",

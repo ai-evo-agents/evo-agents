@@ -38,6 +38,34 @@ pub struct TaskEvaluateContext<'a> {
     pub metadata: Value,
 }
 
+/// Context provided to [`AgentHandler::on_error_recovery`] for pipeline error analysis.
+pub struct ErrorRecoveryContext<'a> {
+    pub soul: &'a Soul,
+    pub gateway: &'a Arc<GatewayClient>,
+    pub request_id: String,
+    pub run_id: String,
+    pub task_id: String,
+    pub failed_stage: String,
+    pub error_message: String,
+    pub stage_output: Value,
+    pub retry_count: u32,
+    pub task_summary: String,
+}
+
+/// Context provided to [`AgentHandler::on_decompose`] for task decomposition.
+pub struct DecomposeContext<'a> {
+    pub soul: &'a Soul,
+    pub gateway: &'a Arc<GatewayClient>,
+    pub request_id: String,
+    pub run_id: String,
+    pub task_id: String,
+    pub task_type: String,
+    pub summary: String,
+    pub payload: Value,
+    pub context: Value,
+    pub trigger: String,
+}
+
 // ─── AgentHandler trait ──────────────────────────────────────────────────────
 
 /// Trait for handling agent events.
@@ -82,5 +110,21 @@ pub trait AgentHandler: Send + Sync + 'static {
     /// Default implementation is a no-op (returns `Value::Null`).
     async fn on_task_evaluate(&self, _ctx: TaskEvaluateContext<'_>) -> anyhow::Result<Value> {
         Ok(Value::Null)
+    }
+
+    /// Handle an `error:recovery_request` event. Override to provide error analysis.
+    /// Default implementation recommends abort.
+    async fn on_error_recovery(&self, _ctx: ErrorRecoveryContext<'_>) -> anyhow::Result<Value> {
+        Ok(
+            serde_json::json!({ "action": "abort", "reasoning": "no error recovery handler", "params": {} }),
+        )
+    }
+
+    /// Handle a `task:decompose` event. Override to break tasks into subtasks.
+    /// Default implementation returns empty subtasks (no decomposition).
+    async fn on_decompose(&self, _ctx: DecomposeContext<'_>) -> anyhow::Result<Value> {
+        Ok(
+            serde_json::json!({ "should_decompose": false, "subtasks": [], "reasoning": "no decomposition handler" }),
+        )
     }
 }
